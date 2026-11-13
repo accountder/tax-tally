@@ -1,6 +1,6 @@
 # TaxTally · 发票金额助手
 
-> 把电子税务局发票查询页的「合计金额 / 合计税额」直接换算成**万元**显示，一眼看清量级；附带阈值高亮、批量汇总、CSV 导出和快捷办税菜单。
+> 把电子税务局发票查询页的「合计金额 / 合计税额」直接换算成**万元**显示，一眼看清量级；附带左侧税务助手、阈值高亮、批量汇总、CSV 导出和快捷办税入口。
 >
 > A Chrome extension (Manifest V3) that renders invoice totals in **万元 (10k CNY)** on the Hubei e-Tax invoice query page — without touching the original numbers.
 
@@ -18,7 +18,7 @@ and any script reading it still see the real values.
 
 It also highlights totals above a configurable threshold, can auto-refresh the login page on a
 timer, runs a quarter-by-quarter / month-by-month batch query and exports the result as CSV,
-and adds a floating shortcut menu to jump between common tax tasks.
+and adds one left-side tax assistant for shortcuts, date tools, and optional local login-form filling.
 
 No network requests. No telemetry. No remote code. Settings live in `chrome.storage`.
 
@@ -53,15 +53,24 @@ No network requests. No telemetry. No remote code. Settings live in `chrome.stor
 - 结果以浮层表格实时显示，含合计行，一键导出 CSV（带 BOM，Excel 双击不乱码）
 - 也可单独导出当前页表格
 
-### 5. 快捷办税菜单
+### 5. 左侧税务助手
 
-悬浮在页面右上角，**仅**在 `https://etax.hubei.chinatax.gov.cn:8443` 出现：
+- 在 `etax.hubei.chinatax.gov.cn`、`dppt.hubei.chinatax.gov.cn` 和 `tpass.hubei.chinatax.gov.cn` 的业务页左侧显示同一个可折叠助手
+- 登录账号、快捷办税和日期工具共用同一个左侧窗口，不再创建独立的登录浮窗
+- 可直接编辑信用代码、手机号/证件号码和密码，支持「保存并填充」「仅填充」「显示密码」「清空」
+- 点击填充时会自动切换到「密码登录」，并等待 SPA 表单渲染后填入；逐项填充不会触发提前提交
+- 账号仅保存在本机 `chrome.storage.local`，详见下方「隐私」一节
+
+### 6. 快捷办税菜单
+
+左侧「税务助手」在 etax / dppt / tpass 页面出现：
 
 自动填充 · 身份切换 · 复制开票 · 蓝字开具 · 红字开具 · 全量查询 · 信息查询 · 未申报查询 · 重置账号
 
-### 6. 其他
+登录区位于同一个左侧窗口中；dppt 发票查询页也可展开助手保存账号，但非登录页不会填充，进入登录页后再执行填充。
 
-- **跨域账号填充**：登录页一键填信用代码 / 手机号 / 密码（见下方「隐私」一节，务必先读）
+### 7. 其他
+
 - **dppt 返回入口**：发票查询页右上角「← 返回税务首页」，跳回 `/loginb/`
 - **设置面板**：4 个标签页（万元 / 高亮 / 刷新 / 工具），顶部实时回显当前页状态与识别到的合计金额
 
@@ -92,8 +101,8 @@ No network requests. No telemetry. No remote code. Settings live in `chrome.stor
 但它有一个功能需要你知情：**「自动填充」会把信用代码 / 手机号 / 密码存在 `chrome.storage.local`**。
 `chrome.storage.local` 是**未加密**的本地存储，能读到你这台电脑文件的程序就能读到它。
 
-- 不用自动填充的话，**不要点**「自动填充」，就不会有任何账号信息被写入
-- 已经填过的，点菜单里的「🧹 重置账号」清空
+- 不用账号填充的话，**不要点**「保存并填充」，就不会有任何账号信息被写入
+- 已经填过的，点左侧助手登录区的「清空」、菜单「🧹 重置账号」，或设置面板「工具 → 重置已保存的登录账号」
 - 公开使用建议：改成只用 `chrome.storage.session`（关浏览器即清）或干脆不保存密码
 
 细节见 [PRIVACY.md](PRIVACY.md)。
@@ -160,7 +169,7 @@ No network requests. No telemetry. No remote code. Settings live in `chrome.stor
 └── LICENSE
 ```
 
-`content.js` 结构（按注释分段）：全局配置 → 用户设置 → 万元浮层 → 阈值/类型高亮 → 快捷菜单 → 跨域账号 → 日期与查询 → 批量汇总 → CSV → dppt 返回 → 面板状态 → 启动。
+`content.js` 结构（按注释分段）：全局配置 → 用户设置 → 唯一左侧税务助手（登录 + 快捷办税 + 日期）→ 万元浮层 → 阈值/类型高亮 → 日期与查询 → 批量汇总 → CSV → dppt 返回 → 面板状态 → 启动。
 
 ---
 
@@ -186,3 +195,4 @@ No network requests. No telemetry. No remote code. Settings live in `chrome.stor
 ## License
 
 [MIT](LICENSE)
+

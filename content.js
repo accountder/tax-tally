@@ -73,11 +73,12 @@ const textConfig = {
 };
 
 const quickNavConfig = {
-    // 浮动快捷菜单的显示白名单：只有「协议 + 域名 + 端口」完全一致时才注入。
-    // 需要让菜单也出现在 dppt 发票查询页时，加一项
-    // "https://dppt.hubei.chinatax.gov.cn:8443" 即可。
+    // 左侧税务助手显示白名单：协议 + 域名 + 端口完全一致时才注入。
+    // etax / dppt / tpass 共用同一个侧边栏；登录区仅在登录页可填充。
     menuOrigins: [
-        "https://etax.hubei.chinatax.gov.cn:8443"
+        "https://etax.hubei.chinatax.gov.cn:8443",
+        "https://dppt.hubei.chinatax.gov.cn:8443",
+        "https://tpass.hubei.chinatax.gov.cn:8443"
     ],
     links: [
         { name: "🔑 自动填充", url: "javascript:void(0)", onclick: (e) => handleAutoLogin(e), target: "_self" },
@@ -124,59 +125,129 @@ const MENU_ALLOWED = (() => {
 // =====================================================
 
 // 解决日期回弹的强力填充逻辑
-function nativeFill(input, value) {
+function nativeFill(input, value, options = {}) {
     if (!input || value === undefined || value === null || value === "") return;
     try {
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
         setter.call(input, value);
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+        // 日期输入需要回车让组件确认；登录表单逐项填充时不能回车，否则首项就会触发提交。
+        if (options.pressEnter !== false) {
+            input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+        }
     } catch (e) {}
 }
 
-// 跨域账号获取逻辑（解决重复输入）
+// =====================================================
+// === 2.1 登录助手：悬浮账号卡 + 跨域填充 ===
+// =====================================================
+// 登录表单不再创建独立窗口，而是嵌入左侧 plugin-quick-nav 侧边栏。
+const LOGIN_PANEL_ID = MENU_ID;
+
+const LOGIN_FIELD_SELECTORS = {
+    code: [
+        'input[placeholder*="信用代码"]',
+        'input[placeholder*="统一社会信用代码"]',
+        'input[placeholder*="纳税人识别号"]',
+        'input[name*="credit"]',
+        'input[name*="taxNo"]'
+    ],
+    num: [
+        'input[placeholder*="手机"]',
+        'input[placeholder*="证件"]',
+        'input[placeholder*="身份证"]',
+        'input[placeholder*="号码"]',
+        'input[placeholder*="用户名"]',
+        'input[name*="phone"]',
+        'input[name*="mobile"]',
+        'input[name*="idCard"]',
+        'input[name*="certNo"]'
+    ],
+    pwd: ['input[type="password"]']
+};
+
+function isLoginPage() {
+    const host = location.hostname.toLowerCase();
+    if (host === "tpass.hubei.chinatax.gov.cn") {
+        return /#\/login(?:\?|\/|$)/i.test(location.hash || "")
+            || /^\/login/i.test(location.pathname);
+    }
+    return host === "etax.hubei.chinatax.gov.cn"
+        && /^\/loginb(?:\/|$)/i.test(location.pathname);
+}
+
 function getSavedCredentials(callback) {
     try {
         chrome.storage.local.get([config.storageKey], (result) => {
-            const saved = result && result[config.storageKey];
-            if (saved) { callback(saved); return; }
-            if (state.isPrompting) return;
-            state.isPrompting = true;
-            let data = null;
-            try {
-                const code = prompt("【首次使用配置】\n只需设置一次，所有办税页面通用。\n请输入 信用代码:");
-                if (!code) return;                       // 逐步判断，取消一个就不再往下问
-                const num = prompt("请输入 手机/证件号码:");
-                if (!num) return;
-                const pwd = prompt("请输入 登录密码:");
-                if (!pwd) return;
-                data = { code, num, pwd };
-            } finally {
-                state.isPrompting = false;
+            if (chrome.runtime.lastError) {
+                showToast("⚠ 读取账号失败，请检查扩展权限", window.innerWidth / 2, 140, "#ff4d4f");
+                callback(null);
+                return;
             }
-            if (data) {
-                chrome.storage.local.set({ [config.storageKey]: data }, () => callback(data));
-            }
+            callback((result && result[config.storageKey]) || null);
         });
     } catch (e) {
-        state.isPrompting = false;
+        callback(null);
         showToast("⚠ 存储不可用，请检查扩展权限", window.innerWidth / 2, 140, "#ff4d4f");
     }
 }
 
+function saveCredentials(creds, callback) {
+    try {
+        chrome.storage.local.set({ [config.storageKey]: creds }, () => {
+            // chrome.storage 的错误是异步通过 runtime.lastError 返回的；
+            // 不检查会把写入失败误报成“已保存”。
+            if (chrome.runtime.lastError) {
+                showToast("⚠ 保存失败，请检查扩展权限", window.innerWidth / 2, 140, "#ff4d4f");
+                callback && callback(false);
+                return;
+            }
+            callback && callback(true);
+        });
+    } catch (e) {
+        showToast("⚠ 保存失败，请检查扩展权限", window.innerWidth / 2, 140, "#ff4d4f");
+        callback && callback(false);
+    }
+}
+
+function updateLoginPanelFields(creds) {
+    const panel = document.getElementById(LOGIN_PANEL_ID);
+    if (!panel) return;
+    const code = panel.querySelector('[data-plugin-login-field="code"]');
+    const num = panel.querySelector('[data-plugin-login-field="num"]');
+    const pwd = panel.querySelector('[data-plugin-login-field="pwd"]');
+    if (code) code.value = creds && creds.code || "";
+    if (num) num.value = creds && creds.num || "";
+    if (pwd) pwd.value = creds && creds.pwd || "";
+}
+
 function resetCredentials() {
-    if (confirm("确定要清空已保存的账号吗？（所有税务页面都将重置）")) {
-        chrome.storage.local.remove(config.storageKey, () => alert("✓ 账号信息已清空"));
+    if (!confirm("确定要清空已保存的账号吗？（所有税务页面都将重置）")) return;
+    try {
+        chrome.storage.local.remove(config.storageKey, () => {
+            if (chrome.runtime.lastError) {
+                setLoginPanelStatus("清空失败，请检查扩展权限", "error");
+                showToast("⚠ 清空失败，请检查扩展权限", window.innerWidth / 2, 140, "#ff4d4f");
+                return;
+            }
+            updateLoginPanelFields(null);
+            setLoginPanelStatus("账号已清空", "ok");
+            showToast("✓ 账号信息已清空", window.innerWidth / 2, 140, "#52c41a");
+        });
+    } catch (e) {
+        showToast("⚠ 清空失败，请检查扩展权限", window.innerWidth / 2, 140, "#ff4d4f");
     }
 }
 
 // 找「密码登录」标签页：优先精确匹配，避免误点"忘记密码""注册"等链接
 function findPasswordTab() {
-    const cands = Array.from(document.querySelectorAll('span, .t-tabs__item, .t-tabs__nav-item, [role="tab"]'));
+    const cands = Array.from(document.querySelectorAll(
+        'span, button, a, .t-tabs__item, .t-tabs__nav-item, .el-tabs__item, .ant-tabs-tab, .arco-tabs-tab, [role="tab"]'
+    ));
     const bad = /忘记|找回|注册|设置密码|修改密码/;
     const clean = (el) => {
-        const t = (el.innerText || "").replace(/\s+/g, "");
+        const t = (el.innerText || el.textContent || "").replace(/\s+/g, "");
         if (!t || t.length > 12 || bad.test(t)) return "";
         return t;
     };
@@ -185,22 +256,323 @@ function findPasswordTab() {
         || null;
 }
 
-function handleAutoLogin() {
-    getSavedCredentials((creds) => {
-        if (!creds) return;
-        const missing = ["code", "num", "pwd"].filter(k => !creds[k]);
-        if (missing.length) {
-            showToast("⚠ 账号信息不完整，请点「重置账号」重新填写", window.innerWidth / 2, 140, "#ff4d4f");
+function isUsableLoginInput(input) {
+    if (!input || input.disabled || input.readOnly) return false;
+    if (input.closest && input.closest("#" + LOGIN_PANEL_ID)) return false;
+    try {
+        const style = window.getComputedStyle(input);
+        if (style.display === "none" || style.visibility === "hidden") return false;
+        return input.getClientRects().length > 0;
+    } catch (e) {
+        return true;
+    }
+}
+
+function findLoginInput(selectors) {
+    for (const selector of selectors) {
+        const inputs = document.querySelectorAll(selector);
+        for (const input of inputs) {
+            if (isUsableLoginInput(input)) return input;
+        }
+    }
+    return null;
+}
+
+function fillLoginForm(creds, callback) {
+    const tab = findPasswordTab();
+    if (tab) tab.click();
+
+    let attempts = 0;
+    const tick = () => {
+        attempts += 1;
+        const code = findLoginInput(LOGIN_FIELD_SELECTORS.code);
+        const num = findLoginInput(LOGIN_FIELD_SELECTORS.num);
+        const pwd = findLoginInput(LOGIN_FIELD_SELECTORS.pwd);
+        let filled = 0;
+
+        const expected = [creds.code, creds.num, creds.pwd].filter(Boolean).length;
+        if (code && creds.code) { nativeFill(code, creds.code, { pressEnter: false }); filled += 1; }
+        if (num && creds.num) { nativeFill(num, creds.num, { pressEnter: false }); filled += 1; }
+        if (pwd && creds.pwd) { nativeFill(pwd, creds.pwd, { pressEnter: false }); filled += 1; }
+
+        // tpass 是 SPA，切换「密码登录」后表单可能晚于点击 400ms 才出现，做有限重试。
+        // 只有保存的三项都真正找到并填入，才提示成功，避免部分填错也被当成完成。
+        if (expected > 0 && filled === expected) {
+            callback && callback(true, attempts);
             return;
         }
-        const tab = findPasswordTab();
-        if (tab) tab.click();
+        if (attempts < 12) {
+            setTimeout(tick, 250);
+        } else {
+            callback && callback(false, attempts);
+        }
+    };
+    setTimeout(tick, 0);
+}
+
+function setLoginPanelStatus(text, kind = "muted") {
+    const status = document.getElementById("plugin-login-status");
+    if (!status) return;
+    const colors = {
+        muted: "#8c8c8c",
+        ok: "#389e0d",
+        error: "#cf1322",
+        pending: "#0958d9"
+    };
+    status.textContent = text;
+    status.style.color = colors[kind] || colors.muted;
+}
+
+function ensureQuickNavStyle() {
+    if (document.getElementById("plugin-quick-nav-style")) return;
+    const style = document.createElement("style");
+    style.id = "plugin-quick-nav-style";
+    style.textContent = `
+        #${MENU_ID} {
+            position: fixed; left: 0; top: 12px; width: 14px;
+            max-height: calc(100vh - 24px); z-index: 2147483647;
+            color: #1f2937; background: transparent; overflow: hidden;
+            font: 12px/1.45 "Microsoft YaHei", "PingFang SC", sans-serif;
+            transition: width .22s ease, box-shadow .22s ease;
+        }
+        #${MENU_ID} * { box-sizing: border-box; }
+        #${MENU_ID}.is-open {
+            width: min(326px, calc(100vw - 20px)); background: #fff;
+            border: 1px solid #dbe7f5; border-left: 0; border-radius: 0 14px 14px 0;
+            box-shadow: 8px 8px 28px rgba(22, 93, 255, .16), 0 2px 8px rgba(0, 0, 0, .08);
+        }
+        #${MENU_ID} .plugin-nav-rail {
+            width: 14px; min-height: 112px; padding: 12px 2px 10px;
+            display: flex; align-items: center; justify-content: center;
+            writing-mode: vertical-rl; text-orientation: upright; letter-spacing: 3px;
+            background: linear-gradient(180deg, #0f6cff, #2f8cff); color: #fff;
+            border-radius: 0 10px 10px 0; box-shadow: 4px 2px 14px rgba(15, 108, 255, .24);
+            font-size: 11px; font-weight: 700; cursor: pointer; user-select: none;
+        }
+        #${MENU_ID}.is-open .plugin-nav-rail { display: none; }
+        #${MENU_ID} .plugin-nav-content {
+            display: none; width: 100%; max-height: calc(100vh - 24px);
+            overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+        }
+        #${MENU_ID}.is-open .plugin-nav-content { display: block; }
+        #${MENU_ID} button, #${MENU_ID} input, #${MENU_ID} select { font: inherit; }
+        #${MENU_ID} .plugin-nav-head {
+            position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px;
+            padding: 10px 11px; background: linear-gradient(135deg, #0f6cff, #2f8cff); color: #fff;
+            user-select: none;
+        }
+        #${MENU_ID} .plugin-nav-mark {
+            width: 28px; height: 28px; flex: 0 0 auto; display: grid; place-items: center;
+            border-radius: 9px; background: rgba(255,255,255,.18); font-size: 15px;
+        }
+        #${MENU_ID} .plugin-nav-title { font-size: 13px; font-weight: 700; letter-spacing: .2px; }
+        #${MENU_ID} .plugin-nav-sub { font-size: 9px; opacity: .82; margin-top: 1px; }
+        #${MENU_ID} .plugin-nav-head-tools { margin-left: auto; display: flex; gap: 5px; }
+        #${MENU_ID} .plugin-nav-tool {
+            width: 26px; height: 26px; padding: 0; border: 0; border-radius: 8px;
+            background: rgba(255,255,255,.16); color: #fff; cursor: pointer; line-height: 1;
+        }
+        #${MENU_ID} .plugin-nav-tool:hover, #${MENU_ID} .plugin-nav-tool[aria-pressed="true"] {
+            background: rgba(255,255,255,.3);
+        }
+        #${MENU_ID} .plugin-nav-context {
+            margin: 10px 11px 0; padding: 8px 10px; border-radius: 9px;
+            background: #eef6ff; border: 1px solid #d6e9ff; color: #24558f;
+            font-size: 10px; line-height: 1.45;
+        }
+        #${MENU_ID} .plugin-nav-context.is-login {
+            background: #effaf1; border-color: #ccebd2; color: #237434;
+        }
+        #${MENU_ID} .plugin-nav-section { padding: 10px 11px 12px; }
+        #${MENU_ID} .plugin-nav-section + .plugin-nav-section { border-top: 1px solid #edf2f8; }
+        #${MENU_ID} .plugin-nav-section-title {
+            display: flex; align-items: center; gap: 7px; margin-bottom: 8px;
+            color: #344054; font-size: 11px; font-weight: 700;
+        }
+        #${MENU_ID} .plugin-nav-section-title small {
+            margin-left: auto; color: #8b97a8; font-size: 9px; font-weight: 400;
+        }
+        #${MENU_ID} .plugin-login-label {
+            display: block; margin: 7px 0 4px; color: #4b5563; font-size: 10px; font-weight: 700;
+        }
+        #${MENU_ID} .plugin-login-input {
+            width: 100%; height: 32px; border: 1px solid #d7e2f0; border-radius: 8px;
+            padding: 0 9px; outline: none; color: #111827; background: #fff;
+        }
+        #${MENU_ID} .plugin-login-input:focus {
+            border-color: #2f8cff; box-shadow: 0 0 0 3px rgba(47,140,255,.12);
+        }
+        #${MENU_ID} .plugin-login-password-row { display: flex; gap: 6px; align-items: center; }
+        #${MENU_ID} .plugin-login-eye {
+            height: 32px; flex: 0 0 48px; border: 1px solid #d7e2f0; border-radius: 8px;
+            background: #f7faff; color: #2563eb; cursor: pointer;
+        }
+        #${MENU_ID} .plugin-login-actions { display: flex; gap: 7px; margin-top: 10px; }
+        #${MENU_ID} .plugin-login-btn {
+            flex: 1; height: 32px; border-radius: 8px; cursor: pointer;
+            font-size: 10px; font-weight: 700;
+        }
+        #${MENU_ID} .plugin-login-btn.primary { border: 1px solid #0f6cff; background: #0f6cff; color: #fff; }
+        #${MENU_ID} .plugin-login-btn.primary:hover { background: #0958d9; }
+        #${MENU_ID} .plugin-login-btn.secondary { border: 1px solid #b8d0ef; background: #f7faff; color: #0f5ecf; }
+        #${MENU_ID} .plugin-login-btn:disabled { cursor: not-allowed; opacity: .45; }
+        #${MENU_ID} .plugin-login-clear {
+            border: 0; background: transparent; color: #cf1322; padding: 5px 1px;
+            cursor: pointer; white-space: nowrap; font-size: 10px;
+        }
+        #${MENU_ID} .plugin-login-status { min-height: 17px; margin-top: 7px; color: #8c8c8c; font-size: 10px; }
+        #${MENU_ID} .plugin-login-privacy { margin-top: 4px; color: #98a2b3; font-size: 9px; line-height: 1.5; }
+        #${MENU_ID} .plugin-nav-link {
+            display: flex; align-items: center; min-height: 31px; padding: 7px 9px;
+            color: #475467; text-decoration: none; border: 1px solid transparent;
+            border-radius: 7px; white-space: nowrap; cursor: pointer;
+        }
+        #${MENU_ID} .plugin-nav-link:hover { background: #f5f9ff; border-color: #e1ecfb; color: #0f5ecf; }
+        #${MENU_ID} .plugin-nav-link.is-danger { color: #cf1322; }
+        #${MENU_ID} .plugin-nav-date { padding: 0 11px 12px; }
+        #${MENU_ID} .plugin-nav-help {
+            margin: 7px 0 0; color: #98a2b3; font-size: 9px; line-height: 1.5;
+        }
+        #${MENU_ID} .plugin-nav-close-note {
+            padding: 7px 11px 10px; color: #b0b8c4; font-size: 9px; text-align: center;
+        }
+        #${MENU_ID} .dynamic-date-btn { width: 100%; }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+}
+
+function readPanelCredentials() {
+    const panel = document.getElementById(LOGIN_PANEL_ID);
+    if (!panel) return null;
+    const code = panel.querySelector('[data-plugin-login-field="code"]');
+    const num = panel.querySelector('[data-plugin-login-field="num"]');
+    const pwd = panel.querySelector('[data-plugin-login-field="pwd"]');
+    if (!code || !num || !pwd) return null;
+    return {
+        code: (code.value || "").trim(),
+        num: (num.value || "").trim(),
+        pwd: pwd.value || ""
+    };
+}
+
+function submitPanelLogin(save) {
+    const creds = readPanelCredentials();
+    if (!creds || !creds.code || !creds.num || !creds.pwd) {
+        setLoginPanelStatus("请完整填写信用代码、号码和密码", "error");
+        return;
+    }
+
+    const loginPage = isLoginPage();
+    if (!save && !loginPage) {
+        setLoginPanelStatus("当前不是登录页；请进入登录页后再填充", "error");
+        showToast("请先进入登录页，再点「仅填充」", window.innerWidth / 2, 120, "#fa8c16");
+        return;
+    }
+
+    const run = () => {
+        setLoginPanelStatus("正在定位登录表单并填充…", "pending");
+        fillLoginForm(creds, (ok, attempts) => {
+            if (ok) {
+                setLoginPanelStatus(save ? "已保存并填入登录表单" : "已填入登录表单", "ok");
+                showToast("✓ 登录信息已填入", window.innerWidth / 2, 120, "#52c41a");
+            } else {
+                setLoginPanelStatus(`未完整填充登录表单（已尝试 ${attempts} 次）`, "error");
+                showToast("⚠ 未完整找到密码登录表单，请先切到「密码登录」", window.innerWidth / 2, 120, "#ff4d4f");
+            }
+        });
+    };
+
+    if (save) {
+        saveCredentials(creds, (ok) => {
+            if (ok === false) return;
+            if (!loginPage) {
+                setLoginPanelStatus("账号已保存；进入登录页后可一键填充", "ok");
+                showToast("✓ 账号已保存，进入登录页后可填充", window.innerWidth / 2, 120, "#52c41a");
+                return;
+            }
+            setLoginPanelStatus("账号已保存，正在填充…", "pending");
+            run();
+        });
+    } else {
+        run();
+    }
+}
+
+function hasCompleteCredentials(creds) {
+    return !!(creds && creds.code && creds.num && creds.pwd);
+}
+
+function setSidebarOpen(menu, open) {
+    if (!menu) return;
+    menu.classList.toggle("is-open", !!open);
+    menu.setAttribute("aria-expanded", String(!!open));
+}
+
+function openLoginSidebar(focusCode) {
+    createQuickNavMenu();
+    const menu = document.getElementById(LOGIN_PANEL_ID);
+    if (!menu) return null;
+    syncSidebarPageState(menu);
+    setSidebarOpen(menu, true);
+    if (focusCode) {
         setTimeout(() => {
-            const fill = (sel, v) => { const el = document.querySelector(sel); if (el && v) nativeFill(el, v); };
-            fill('input[placeholder*="信用代码"]', creds.code);
-            fill('input[placeholder*="号码"]', creds.num);
-            fill('input[type="password"]', creds.pwd);
-        }, 400);
+            const code = menu.querySelector('[data-plugin-login-field="code"]');
+            if (code) {
+                code.focus();
+                code.select();
+                code.scrollIntoView({ block: "nearest" });
+            }
+        }, 40);
+    }
+    return menu;
+}
+
+function syncSidebarPageState(menu) {
+    if (!menu) return;
+    const loginPage = isLoginPage();
+    const hint = menu.querySelector("#plugin-login-page-hint");
+    if (hint) {
+        hint.classList.toggle("is-login", loginPage);
+        if (loginPage) {
+            hint.textContent = "当前在登录页：填写后可直接保存并填充。";
+        } else if (/^dppt\./i.test(location.hostname)) {
+            hint.textContent = "当前在发票业务页：账号可保存，进入登录页后再填充。";
+        } else {
+            hint.textContent = "当前不是登录页：账号可保存，进入登录页后再填充。";
+        }
+    }
+
+    const saveFill = menu.querySelector('[data-plugin-login-action="save-fill"]');
+    if (saveFill) {
+        saveFill.textContent = loginPage ? "保存并填充" : "仅保存账号";
+        saveFill.title = loginPage ? "保存账号并填入登录表单" : "只保存账号，不执行填充";
+    }
+    const fill = menu.querySelector('[data-plugin-login-action="fill"]');
+    if (fill) {
+        fill.disabled = !loginPage;
+        fill.title = loginPage ? "使用已保存的账号填充登录表单" : "进入登录页后才能填充";
+    }
+    menu.dataset.loginPage = loginPage ? "1" : "0";
+}
+
+function handleAutoLogin() {
+    getSavedCredentials((creds) => {
+        if (!hasCompleteCredentials(creds)) {
+            openLoginSidebar(true);
+            setLoginPanelStatus("请先在左侧助手完整填写信用代码、号码和密码", "error");
+            showToast("请先在左侧助手填写完整账号", window.innerWidth / 2, 120, "#fa8c16");
+            return;
+        }
+        if (!isLoginPage()) {
+            openLoginSidebar(false);
+            setLoginPanelStatus("账号已保存；进入登录页后再执行填充", "ok");
+            showToast("当前不是登录页，请先进入登录页", window.innerWidth / 2, 120, "#fa8c16");
+            return;
+        }
+        fillLoginForm(creds, (ok) => {
+            showToast(ok ? "✓ 登录信息已填入" : "⚠ 当前页面未完整找到登录表单",
+                window.innerWidth / 2, 120, ok ? "#52c41a" : "#ff4d4f");
+        });
     });
 }
 
@@ -398,63 +770,195 @@ function updateDateButtons(container) {
 }
 
 function createQuickNavMenu() {
-    // 只在白名单 origin 下出现；其他页面若已注入则移除
+    // 白名单覆盖 etax / dppt / tpass：所有税务业务页共用同一个左侧侧边助手。
     if (!MENU_ALLOWED) {
         const stale = document.getElementById(MENU_ID);
         if (stale) stale.remove();
         return;
     }
-    const id = MENU_ID;
-    if (document.getElementById(id)) return;
-    const menu = document.createElement("div");
-    menu.id = id;
-    menu.style.cssText = `position: fixed; left: 0; top: 15%; width: 12px; height: auto; background: white; border: 1px solid #e4e7ed; border-radius: 0 12px 12px 0; box-shadow: 6px 0 20px rgba(0,0,0,0.15); z-index: 2147483647; overflow: hidden; transition: width 0.3s; cursor: pointer; font-family: sans-serif;`;
-    const wrap = document.createElement("div"); wrap.style.width = "115px"; menu.appendChild(wrap);
-    menu.onmouseenter = () => menu.style.width = "115px";
-    menu.onmouseleave = () => menu.style.width = "12px";
+    if (!document.body) return;
 
-    const title = document.createElement("div");
-    title.innerText = "⚡ 快捷办税";
-    title.style.cssText = `background: #1890ff; color: white; padding: 10px 0; font-size: 11px; text-align: center; font-weight: bold;`;
-    wrap.appendChild(title);
+    const existing = document.getElementById(MENU_ID);
+    if (existing) {
+        syncSidebarPageState(existing);
+        return;
+    }
 
+    ensureQuickNavStyle();
+    const menu = document.createElement("aside");
+    menu.id = MENU_ID;
+    menu.setAttribute("role", "complementary");
+    menu.setAttribute("aria-label", "TaxTally 税务侧边助手");
+    menu.setAttribute("aria-expanded", "false");
+    menu.innerHTML = `
+        <div class="plugin-nav-rail" role="button" tabindex="0" title="展开税务助手" aria-label="展开税务助手">税务助手</div>
+        <div class="plugin-nav-content">
+            <div class="plugin-nav-head">
+                <div class="plugin-nav-mark">税</div>
+                <div>
+                    <div class="plugin-nav-title">税务侧边助手</div>
+                    <div class="plugin-nav-sub">登录账号 · 快捷办税 · 日期工具</div>
+                </div>
+                <div class="plugin-nav-head-tools">
+                    <button class="plugin-nav-tool" type="button" data-nav-action="pin" title="固定展开" aria-label="固定展开" aria-pressed="false">📌</button>
+                    <button class="plugin-nav-tool" type="button" data-nav-action="close" title="收起" aria-label="收起侧边助手">×</button>
+                </div>
+            </div>
+            <div class="plugin-nav-context" id="plugin-login-page-hint">正在识别当前页面…</div>
+
+            <section class="plugin-nav-section">
+                <div class="plugin-nav-section-title">🔑 登录助手 <small>仅保存在本机</small></div>
+                <label class="plugin-login-label" for="plugin-login-code">统一社会信用代码</label>
+                <input id="plugin-login-code" class="plugin-login-input" data-plugin-login-field="code" autocomplete="username" placeholder="请输入信用代码">
+                <label class="plugin-login-label" for="plugin-login-num">手机号 / 证件号码</label>
+                <input id="plugin-login-num" class="plugin-login-input" data-plugin-login-field="num" autocomplete="username" placeholder="请输入手机号或证件号码">
+                <label class="plugin-login-label" for="plugin-login-pwd">登录密码</label>
+                <div class="plugin-login-password-row">
+                    <input id="plugin-login-pwd" class="plugin-login-input" data-plugin-login-field="pwd" type="password" autocomplete="current-password" placeholder="请输入登录密码">
+                    <button class="plugin-login-eye" type="button" data-plugin-login-action="toggle-password">显示</button>
+                </div>
+                <div class="plugin-login-actions">
+                    <button class="plugin-login-btn primary" type="button" data-plugin-login-action="save-fill">保存并填充</button>
+                    <button class="plugin-login-btn secondary" type="button" data-plugin-login-action="fill">仅填充</button>
+                    <button class="plugin-login-clear" type="button" data-plugin-login-action="clear">清空</button>
+                </div>
+                <div class="plugin-login-status" id="plugin-login-status" role="status">正在读取本机账号…</div>
+                <div class="plugin-login-privacy">账号只写入 chrome.storage.local；不联网，不上传到税务页面以外的位置。</div>
+            </section>
+
+            <section class="plugin-nav-section">
+                <div class="plugin-nav-section-title">⚡ 快捷办税 <small>常用入口</small></div>
+                <div id="plugin-quick-links"></div>
+            </section>
+
+            <section class="plugin-nav-section">
+                <div class="plugin-nav-section-title">📅 日期快捷 <small>发票查询页</small></div>
+                <div id="plugin-date-box"></div>
+            </section>
+            <div class="plugin-nav-close-note">鼠标移出自动收起；点 📌 可固定</div>
+        </div>
+    `;
+    document.body.appendChild(menu);
+
+    const rail = menu.querySelector(".plugin-nav-rail");
+    const pinBtn = menu.querySelector('[data-nav-action="pin"]');
+    const closeBtn = menu.querySelector('[data-nav-action="close"]');
+    let closeTimer = null;
+    const isPinned = () => pinBtn.getAttribute("aria-pressed") === "true";
+
+    const scheduleClose = () => {
+        if (closeTimer) clearTimeout(closeTimer);
+        closeTimer = setTimeout(() => {
+            if (isPinned() || menu.matches(":hover")) return;
+            if (menu.contains(document.activeElement)) return;
+            setSidebarOpen(menu, false);
+        }, 260);
+    };
+
+    menu.addEventListener("mouseenter", () => {
+        if (closeTimer) clearTimeout(closeTimer);
+        setSidebarOpen(menu, true);
+    });
+    menu.addEventListener("mouseleave", scheduleClose);
+    menu.addEventListener("focusin", (e) => {
+        setSidebarOpen(menu, true);
+        if (e.target === rail) setTimeout(() => pinBtn.focus(), 0);
+    });
+    menu.addEventListener("focusout", (e) => {
+        if (menu.contains(e.relatedTarget)) return;
+        scheduleClose();
+    });
+
+    rail.addEventListener("click", () => setSidebarOpen(menu, true));
+    rail.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        setSidebarOpen(menu, true);
+        pinBtn.focus();
+    });
+    pinBtn.addEventListener("click", () => {
+        const pinned = !isPinned();
+        pinBtn.setAttribute("aria-pressed", String(pinned));
+        pinBtn.title = pinned ? "取消固定" : "固定展开";
+        pinBtn.setAttribute("aria-label", pinned ? "取消固定" : "固定展开");
+        setSidebarOpen(menu, true);
+    });
+    closeBtn.addEventListener("click", () => {
+        pinBtn.setAttribute("aria-pressed", "false");
+        if (menu.contains(document.activeElement)) document.activeElement.blur();
+        setSidebarOpen(menu, false);
+    });
+
+    const linkBox = menu.querySelector("#plugin-quick-links");
     quickNavConfig.links.forEach(link => {
         const a = document.createElement("a");
-        a.innerText = link.name; a.href = link.url; a.target = link.target || "_blank";
-        const isR = link.name.includes("重置");
-        a.style.cssText = `display: block; padding: 8px 12px; color: ${isR?'#ff4d4f':'#444'}; text-decoration: none; font-size: 10px; border-bottom: 1px solid #f5f7fa; white-space: nowrap;`;
+        a.className = "plugin-nav-link" + (link.name.includes("重置") ? " is-danger" : "");
+        a.innerText = link.name;
+        a.href = link.url;
+        a.target = link.target || "_blank";
+        a.rel = "noopener noreferrer";
         if (link.onclick) {
             // 阻止 javascript: 伪协议跳转，避免被页面 CSP 拦截或触发额外导航
             a.onclick = (e) => { e.preventDefault(); link.onclick(e); };
         }
-        wrap.appendChild(a);
+        linkBox.appendChild(a);
     });
 
-    const dBox = document.createElement('div');
-    dBox.id = "plugin-date-box"; dBox.style.cssText = "padding: 8px 6px; background: #fcfcfc;";
+    const dBox = menu.querySelector("#plugin-date-box");
     const d = new Date();
     const fmt = (date) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
     const s12 = fmt(new Date(d.getFullYear()-1, d.getMonth(), d.getDate()+2));
     const e12 = fmt(new Date(d.getFullYear(), d.getMonth(), d.getDate()+1));
 
-    const fixB = document.createElement('button');
+    const fixB = document.createElement("button");
+    fixB.type = "button";
     fixB.textContent = "📅 近12个月";
-    fixB.style.cssText = `width: 100%; padding: 5px 0; margin-bottom: 8px; border: 1px solid #0052d9; background: #0052d9; color: white; border-radius: 6px; font-size: 10px; font-weight: bold; cursor: pointer;`;
+    fixB.style.cssText = `width: 100%; padding: 6px 0; margin-bottom: 7px; border: 1px solid #0052d9; background: #0052d9; color: white; border-radius: 6px; font-size: 10px; font-weight: bold; cursor: pointer;`;
     fixB.onclick = () => fillDateAndSearch(s12, e12);
     dBox.appendChild(fixB);
 
-    const sel = document.createElement('select');
-    sel.style.cssText = `width: 100%; padding: 2px; font-size: 11px; margin-bottom: 5px; cursor: pointer;`;
+    const sel = document.createElement("select");
+    sel.style.cssText = `width: 100%; padding: 3px; font-size: 11px; margin-bottom: 4px; cursor: pointer; border: 1px solid #d7e2f0; border-radius: 6px; background: #fff;`;
     for (let y = d.getFullYear(); y >= d.getFullYear() - 5; y--) {
-        const opt = document.createElement('option'); opt.value = y; opt.textContent = y + " 年";
-        if(y === state.selectedYear) opt.selected = true;
+        const opt = document.createElement("option");
+        opt.value = y;
+        opt.textContent = y + " 年";
+        if (y === state.selectedYear) opt.selected = true;
         sel.appendChild(opt);
     }
     sel.onchange = (e) => { state.selectedYear = parseInt(e.target.value); updateDateButtons(dBox); };
     dBox.appendChild(sel);
     updateDateButtons(dBox);
-    wrap.appendChild(dBox);
-    document.body.appendChild(menu);
+
+    const foldBtn = menu.querySelector('[data-plugin-login-action="toggle-password"]');
+    foldBtn.addEventListener("click", (e) => {
+        const input = menu.querySelector('[data-plugin-login-field="pwd"]');
+        const show = input.type === "password";
+        input.type = show ? "text" : "password";
+        e.currentTarget.textContent = show ? "隐藏" : "显示";
+    });
+    menu.querySelector('[data-plugin-login-action="save-fill"]').addEventListener("click", () => submitPanelLogin(true));
+    menu.querySelector('[data-plugin-login-action="fill"]').addEventListener("click", () => submitPanelLogin(false));
+    menu.querySelector('[data-plugin-login-action="clear"]').addEventListener("click", resetCredentials);
+    menu.querySelectorAll(".plugin-login-input").forEach((input) => {
+        input.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            submitPanelLogin(true);
+        });
+    });
+
+    syncSidebarPageState(menu);
+    getSavedCredentials((creds) => {
+        updateLoginPanelFields(creds);
+        if (hasCompleteCredentials(creds)) {
+            setLoginPanelStatus("已读取本机保存的账号，可一键填充", "ok");
+        } else if (creds && (creds.code || creds.num || creds.pwd)) {
+            setLoginPanelStatus("保存的账号信息不完整，请补全三项", "error");
+        } else {
+            setLoginPanelStatus("填写三项后点「保存并填充」即可复用", "muted");
+        }
+    });
 }
 
 // =====================================================
@@ -571,7 +1075,11 @@ function runBusiness() {
                 el.style.removeProperty("font-weight");
             }
         });
-    } catch(e) {} finally { state.isRunning = false; }
+    } catch (e) {
+        console.warn("[TaxTally] runBusiness failed", e);
+    } finally {
+        state.isRunning = false;
+    }
 }
 
 // =====================================================
@@ -1124,8 +1632,10 @@ function buildStatus() {
     return {
         onTax: /hubei\.chinatax\.gov\.cn$/i.test(location.hostname),
         host: location.hostname,
-        page: /^dppt\./i.test(location.hostname) ? "dppt" : (/^etax\./i.test(location.hostname) ? "etax" : "other"),
-        onLogin: /^etax\./i.test(location.hostname) && /^\/loginb(\/|$)/i.test(location.pathname),
+        page: /^dppt\./i.test(location.hostname) ? "dppt"
+            : (/^etax\./i.test(location.hostname) ? "etax"
+                : (/^tpass\./i.test(location.hostname) ? "tpass" : "other")),
+        onLogin: isLoginPage(),
         hasForm: !!document.querySelector('input[placeholder="开票日期起"]'),
         amount: s ? s.amount : null,
         tax: s ? s.tax : null,
@@ -1164,6 +1674,7 @@ function boot() {
             moTimer = setTimeout(() => {
                 moTimer = null;
                 runBusiness();
+                createQuickNavMenu();
             }, 200);
         });
         mo.observe(document.body, { childList: true, subtree: true, characterData: true });
@@ -1183,6 +1694,10 @@ try {
 // 面板改动后实时生效
 try {
     chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === "local" && changes[config.storageKey]) {
+            updateLoginPanelFields(changes[config.storageKey].newValue || null);
+            return;
+        }
         if (area !== "sync" || !changes[SETTINGS_KEY]) return;
         S = Object.assign({}, SETTINGS_DEFAULTS, changes[SETTINGS_KEY].newValue || {});
         applySettings();
@@ -1210,6 +1725,7 @@ function tickSoon() {
 
 window.addEventListener("scroll", tickSoon, true);   // capture 兼容页面内部的滚动容器
 window.addEventListener("resize", tickSoon);
+window.addEventListener("hashchange", () => createQuickNavMenu());
 document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
     runBusiness();
@@ -1219,3 +1735,9 @@ document.addEventListener("visibilitychange", () => {
         doRefresh(true);
     }
 });
+
+
+
+
+
+

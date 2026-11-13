@@ -109,7 +109,7 @@
     <div class="logo">万</div>
     <div>
       <h1>金额计算与高亮工具</h1>
-      <p>v2.1 · 万元浮层 / 高亮 / 定时刷新 / 汇总导出</p>
+      <p>v2.5 · 左侧税务助手 / 万元浮层 / 高亮 / 刷新 / 汇总导出</p>
     </div>
   </header>
 
@@ -251,9 +251,10 @@
     <button class="wide primary" id="runBatch" style="margin-top:4px">开始批量查询并汇总</button>
     <div class="sub">导出</div>
     <button class="wide" id="exportCsv">导出当前表格为 CSV</button>
-    <div class="sub">账号</div>
-    <button class="wide danger" id="resetCreds">重置已保存的登录账号</button>
     <p class="hint">批量汇总会依次切换区间、点查询、读汇总，结果以浮层表格显示在页面中央，可直接导出 CSV。运行期间自动暂停定时刷新。</p>
+    <div class="sub">登录账号</div>
+    <button class="wide danger" id="resetCreds">重置已保存的登录账号</button>
+    <p class="hint">进入 tpass 登录页或 etax /loginb/ 后，鼠标移到页面左侧「税务助手」窄条即可展开；登录账号、快捷办税和日期工具都在同一窗口。</p>
     <div class="note" id="noteTl">—</div>
   </div>
 
@@ -265,3 +266,4 @@
   <script src="popup.js"></script>
 </body>
 </html>
+

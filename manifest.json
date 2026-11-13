@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "TaxTally · 发票金额助手",
-  "version": "2.3",
-  "description": "把发票查询的合计金额/税额显示为万元（超亿自动转亿元）并标红，支持阈值高亮、快捷办税菜单、批量汇总与 CSV 导出。TaxTally: read invoice totals in 万元 at a glance.",
+  "version": "2.5",
+  "description": "把发票查询的合计金额/税额显示为万元（超亿自动转亿元）并标红，支持左侧税务助手（登录账号、快捷办税、日期工具）、阈值高亮、批量汇总与 CSV 导出。TaxTally: read invoice totals in 万元 at a glance.",
   "permissions": [
     "clipboardWrite",
     "storage"
@@ -36,3 +36,4 @@
     "128": "icon128.png"
   }
 }
+

@@ -161,6 +161,7 @@
     LIVE = st;
     let s;
     if (st.page === 'dppt') s = '发票业务页';
+    else if (st.page === 'tpass') s = st.onLogin ? '税务统一登录页' : '税务统一认证页';
     else if (st.onLogin) s = '登录页 /loginb/';
     else s = '电子税务局首页';
 
@@ -263,7 +264,8 @@
   function save(immediate) {
     const doSave = () => {
       chrome.storage.sync.set({ [KEY]: S }, () => {
-        setStatus('✓ 已保存', true);
+        const err = chrome.runtime.lastError;
+        setStatus(err ? '保存失败，请重试' : '✓ 已保存', !err);
       });
     };
     if (immediate) { clearTimeout(saveTimer); doSave(); return; }
@@ -402,7 +404,8 @@
     $('resetCreds').addEventListener('click', () => {
       if (!confirm('确定要清空已保存的账号吗？（所有税务页面都将重置）')) return;
       chrome.storage.local.remove('plugin_tax_user_info', () => {
-        setStatus('✓ 账号已清空', true);
+        const err = chrome.runtime.lastError;
+        setStatus(err ? '清空失败，请重试' : '✓ 账号已清空', !err);
       });
     });
 
@@ -410,8 +413,9 @@
       if (!confirm('把所有设置恢复为默认值？')) return;
       S = Object.assign({}, DEFAULTS);
       chrome.storage.sync.set({ [KEY]: S }, () => {
+        const err = chrome.runtime.lastError;
         applyToForm();
-        setStatus('✓ 已恢复默认', true);
+        setStatus(err ? '恢复失败，请重试' : '✓ 已恢复默认', !err);
       });
     });
   }
@@ -447,3 +451,4 @@
     });
   });
 })();
+
