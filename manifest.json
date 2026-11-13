@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "TaxTally · 发票金额助手",
+  "version": "2.3",
+  "description": "把发票查询的合计金额/税额显示为万元（超亿自动转亿元）并标红，支持阈值高亮、快捷办税菜单、批量汇总与 CSV 导出。TaxTally: read invoice totals in 万元 at a glance.",
+  "permissions": [
+    "clipboardWrite",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://*.hubei.chinatax.gov.cn/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://dppt.hubei.chinatax.gov.cn/*",
+        "*://etax.hubei.chinatax.gov.cn/*",
+        "*://tpass.hubei.chinatax.gov.cn/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "TaxTally · 设置",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

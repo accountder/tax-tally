@@ -1,0 +1,27 @@
+# 本地备份 / 旧版本，不要提交
+*.bak
+*.bak-*
+*.bak.*
+_bak/
+css-bak/
+
+# 导出的发票数据（含真实发票号码与金额，禁止提交）
+*.csv
+*.xlsx
+*.xls
+
+# 截图（可能带真实金额）
+screenshots/
+*.png
+!icon16.png
+!icon48.png
+!icon128.png
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 依赖 / 临时
+node_modules/
+*.log

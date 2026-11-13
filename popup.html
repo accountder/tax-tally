@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>金额计算与高亮工具</title>
+<style>
+  :root{
+    --blue:#0052d9; --red:#e02020; --line:#eef0f4;
+    --txt:#1f2329; --sub:#6b7280;
+  }
+  *{box-sizing:border-box;}
+  body{
+    width:340px; margin:0; background:#fff; color:var(--txt);
+    font:12px/1.45 "Microsoft YaHei",-apple-system,"Segoe UI",sans-serif;
+  }
+  header{padding:7px 12px 6px;background:#0052d9;color:#fff;display:flex;align-items:center;gap:8px;}
+  .logo{
+    width:26px;height:26px;flex:0 0 26px;border-radius:7px;background:rgba(255,255,255,.2);
+    display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;
+  }
+  header h1{margin:0;font-size:12px;font-weight:700;}
+  header p{margin:1px 0 0;font-size:10px;opacity:.85;}
+
+  #pageStatus{
+    display:flex;align-items:center;gap:6px;padding:6px 12px;
+    background:#f5f8fc;border-bottom:1px solid var(--line);
+    font-size:11px;color:#4b5563;min-height:28px;
+  }
+  #pageStatus .dot{width:6px;height:6px;border-radius:50%;background:#c0c4cc;flex:0 0 6px;}
+  #pageStatus.ok .dot{background:#16a34a;}
+  #pageStatus .txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  #pageStatus b{color:var(--red);font-weight:700;}
+
+  .tabs{display:flex;border-bottom:1px solid var(--line);}
+  .tab{
+    flex:1;text-align:center;padding:7px 0;font-size:11px;color:var(--sub);
+    cursor:pointer;border-bottom:2px solid transparent;user-select:none;
+  }
+  .tab:hover{color:var(--blue);}
+  .tab.on{color:var(--blue);font-weight:700;border-bottom-color:var(--blue);}
+
+  .pane{display:none;padding:9px 12px;height:368px;overflow-y:auto;}
+  .pane.on{display:flex;flex-direction:column;}
+  .note{
+    margin-top:auto;padding:7px 9px;border-radius:6px;background:#f5f8fc;
+    border:1px solid #e3ecfa;font-size:10px;line-height:1.55;color:#4b5563;
+  }
+  .note b{color:#1f2329;font-weight:700;}
+
+  .row{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:26px;margin-bottom:2px;}
+  .row>span{color:#4b5563;font-size:11px;white-space:nowrap;}
+  .row>span b{color:var(--txt);font-weight:700;}
+  .ctrl{display:flex;align-items:center;gap:6px;}
+
+  select,input[type=number]{
+    font:inherit;font-size:11px;padding:2px 4px;height:23px;
+    border:1px solid #dcdfe6;border-radius:4px;background:#fff;color:var(--txt);outline:none;
+  }
+  select:focus,input[type=number]:focus{border-color:var(--blue);}
+  input[type=number]{width:72px;text-align:right;}
+  input[type=range]{width:76px;accent-color:var(--blue);height:18px;}
+
+  .switch{position:relative;display:inline-block;width:30px;height:16px;flex:0 0 30px;}
+  .switch input{opacity:0;width:0;height:0;}
+  .slider{position:absolute;inset:0;background:#cfd4dc;border-radius:16px;transition:.16s;cursor:pointer;}
+  .slider::before{
+    content:"";position:absolute;width:12px;height:12px;left:2px;top:2px;
+    background:#fff;border-radius:50%;transition:.16s;box-shadow:0 1px 2px rgba(0,0,0,.2);
+  }
+  .switch input:checked+.slider{background:var(--blue);}
+  .switch input:checked+.slider::before{transform:translateX(14px);}
+  .switch input:disabled+.slider{opacity:.5;cursor:not-allowed;}
+
+  .swatches{display:flex;gap:5px;align-items:center;}
+  .sw{width:17px;height:17px;border-radius:4px;cursor:pointer;border:2px solid transparent;}
+  .sw.on{border-color:#1f2329;}
+
+  .preview{
+    margin-top:7px;padding:6px 8px;border-radius:5px;background:#f7f9fc;
+    border:1px dashed #d8dee8;font-size:11px;line-height:1.65;color:#374151;
+  }
+  .preview .cap{font-size:10px;color:var(--sub);display:block;margin-bottom:2px;}
+
+  button{
+    font:inherit;font-size:11px;cursor:pointer;border-radius:5px;padding:5px 8px;
+    border:1px solid #dcdfe6;background:#fff;color:var(--txt);transition:.15s;
+  }
+  button:hover{border-color:var(--blue);color:var(--blue);}
+  button.primary{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:700;}
+  button.primary:hover{background:#0043b3;color:#fff;}
+  button.wide{width:100%;}
+  button.danger{color:var(--red);border-color:#ffccc7;}
+  button.danger:hover{background:#fff1f0;border-color:var(--red);}
+
+  footer{
+    display:flex;align-items:center;justify-content:space-between;gap:8px;
+    padding:6px 12px;background:#fafbfc;border-top:1px solid var(--line);
+  }
+  #status{font-size:10px;color:var(--sub);}
+  #status.ok{color:#16a34a;}
+  .hint{font-size:10px;color:#9aa1ac;margin:6px 0 0;line-height:1.5;}
+  .disabled{opacity:.4;pointer-events:none;}
+  .sub{font-size:10px;font-weight:700;color:var(--sub);letter-spacing:.4px;margin:9px 0 4px;}
+  .sub.first{margin-top:0;}
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo">万</div>
+    <div>
+      <h1>金额计算与高亮工具</h1>
+      <p>v2.1 · 万元浮层 / 高亮 / 定时刷新 / 汇总导出</p>
+    </div>
+  </header>
+
+  <div id="pageStatus"><span class="dot"></span><span class="txt">正在读取当前页面…</span></div>
+
+  <div class="tabs">
+    <div class="tab on" data-pane="wan">万元</div>
+    <div class="tab" data-pane="hl">高亮</div>
+    <div class="tab" data-pane="rf">刷新</div>
+    <div class="tab" data-pane="tl">工具</div>
+  </div>
+
+  <div class="pane on" id="pane-wan">
+    <div class="row">
+      <span>显示方式</span>
+      <select id="wanDisplayMode">
+        <option value="overlay">浮层（原数字不动）</option>
+        <option value="inline">数字后追加标签</option>
+        <option value="off">关闭</option>
+      </select>
+    </div>
+    <div class="row">
+      <span>合计金额转万元</span>
+      <label class="switch"><input type="checkbox" id="amountToWan"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <span>合计税额转万元</span>
+      <label class="switch"><input type="checkbox" id="taxToWan"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <span>小数位</span>
+      <select id="wanDecimals">
+        <option value="2">2 位（8.58 万元）</option>
+        <option value="4">4 位（8.5772 万元）</option>
+        <option value="6">6 位（8.577228 万元）</option>
+      </select>
+    </div>
+    <div class="row">
+      <span>超 1 亿自动用亿元</span>
+      <label class="switch"><input type="checkbox" id="unitAuto"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <span>颜色</span>
+      <span class="ctrl">
+        <span class="swatches">
+          <span class="sw" data-color="#e02020" style="background:#e02020"></span>
+          <span class="sw" data-color="#fa8c16" style="background:#fa8c16"></span>
+          <span class="sw" data-color="#0052d9" style="background:#0052d9"></span>
+          <span class="sw" data-color="#16a34a" style="background:#16a34a"></span>
+          <span class="sw" data-color="#1f2329" style="background:#1f2329"></span>
+        </span>
+        <input type="color" id="wanColor" title="自定义颜色" style="width:22px;height:20px;padding:0;border:1px dashed #c0c4cc;border-radius:4px;background:#fff;cursor:pointer">
+      </span>
+    </div>
+    <div class="row">
+      <span>字号 <b id="fontSizeVal">15px</b></span>
+      <input type="range" id="wanFontSize" min="12" max="22" step="1">
+    </div>
+    <div class="row">
+      <span>数值加粗</span>
+      <label class="switch"><input type="checkbox" id="wanBold"><span class="slider"></span></label>
+    </div>
+    <div class="preview">
+      <span class="cap" id="previewCap">实时预览</span>
+      <span id="previewText"></span>
+    </div>
+    <p class="hint">点击万元数值可复制原始元值，悬停查看精确金额。</p>
+  </div>
+
+  <div class="pane" id="pane-hl">
+    <div class="row">
+      <span>金额超阈值标红</span>
+      <label class="switch"><input type="checkbox" id="thresholdOn"><span class="slider"></span></label>
+    </div>
+    <div class="row" data-need="thresholdOn">
+      <span>阈值</span>
+      <span class="ctrl">
+        <input type="number" id="highlightThreshold" step="10000" min="0">
+        <span style="font-size:10px;color:#9aa1ac">元</span>
+      </span>
+    </div>
+    <div class="row">
+      <span>专用发票行高亮</span>
+      <label class="switch"><input type="checkbox" id="typeHighlight"><span class="slider"></span></label>
+    </div>
+    <p class="hint">阈值对标「合计金额」。超过时原始合计数字变红，回落到阈值以下会自动恢复颜色。专用发票行高亮针对「数电发票（增值税专用发票）」这一行。</p>
+    <div class="note" id="noteHl">—</div>
+  </div>
+
+  <div class="pane" id="pane-rf">
+    <div class="row">
+      <span>启用定时刷新</span>
+      <label class="switch"><input type="checkbox" id="autoRefresh"><span class="slider"></span></label>
+    </div>
+    <div class="row" data-need="autoRefresh">
+      <span>间隔</span>
+      <select id="refreshSeconds" style="width:104px">
+        <option value="30">30 秒</option>
+        <option value="60">1 分钟</option>
+        <option value="120">2 分钟</option>
+        <option value="300">5 分钟</option>
+        <option value="600">10 分钟</option>
+        <option value="1800">30 分钟</option>
+      </select>
+    </div>
+    <div class="row" data-need="autoRefresh">
+      <span>生效页面</span>
+      <select id="refreshScope" style="width:150px">
+        <option value="login">仅登录页 /loginb/</option>
+        <option value="all">全部税务页面</option>
+      </select>
+    </div>
+    <div class="row" data-need="autoRefresh">
+      <span>右下角显示倒计时</span>
+      <label class="switch"><input type="checkbox" id="refreshBadge"><span class="slider"></span></label>
+    </div>
+    <div class="row" data-need="autoRefresh" data-login-off="1">
+      <span>刷新后恢复查询条件</span>
+      <label class="switch"><input type="checkbox" id="restoreQuery"><span class="slider"></span></label>
+    </div>
+    <button class="wide primary" id="refreshNow" style="margin-top:6px">立即刷新当前页</button>
+    <p class="hint">默认只在 etax.hubei.chinatax.gov.cn:8443/loginb/ 生效，其余页面一律不刷新，不会打断开票和填单。</p>
+    <div class="note" id="noteRf">—</div>
+  </div>
+
+  <div class="pane" id="pane-tl">
+    <div class="sub first">批量汇总（需在发票查询页）</div>
+    <div class="row">
+      <span>年份</span>
+      <select id="batchYear" style="width:96px"></select>
+    </div>
+    <div class="row">
+      <span>分段方式</span>
+      <select id="batchMode" style="width:140px">
+        <option value="quarter">按季度（4 段）</option>
+        <option value="month">按月度（12 段）</option>
+      </select>
+    </div>
+    <button class="wide primary" id="runBatch" style="margin-top:4px">开始批量查询并汇总</button>
+    <div class="sub">导出</div>
+    <button class="wide" id="exportCsv">导出当前表格为 CSV</button>
+    <div class="sub">账号</div>
+    <button class="wide danger" id="resetCreds">重置已保存的登录账号</button>
+    <p class="hint">批量汇总会依次切换区间、点查询、读汇总，结果以浮层表格显示在页面中央，可直接导出 CSV。运行期间自动暂停定时刷新。</p>
+    <div class="note" id="noteTl">—</div>
+  </div>
+
+  <footer>
+    <button id="resetAll">恢复默认</button>
+    <span id="status"></span>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
